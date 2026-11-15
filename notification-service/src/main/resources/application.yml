@@ -67,3 +67,12 @@ oncebox:
       ttl: 14d
       polling:
         initial-delay: 1m
+
+app:
+  version: '@project.version@'
+  instance-id: ${HOSTNAME:local}
+  environment: ${DEPLOY_ENV:local}
+  logging:
+    json:
+      enabled: ${LOG_JSON_ENABLED:false}
+      path: ${LOG_JSON_PATH:./logs}
