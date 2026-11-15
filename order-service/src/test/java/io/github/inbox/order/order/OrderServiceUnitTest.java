@@ -1,5 +1,6 @@
 package io.github.inbox.order.order;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.github.inbox.contract.EventTypes;
 import io.github.inbox.contract.OrderCancelledEvent;
 import io.github.inbox.contract.OrderCreatedEvent;
@@ -12,6 +13,7 @@ import io.github.inbox.order.persistence.OrderEntity;
 import io.github.inbox.order.persistence.OrderLineEntity;
 import io.github.inbox.order.persistence.OrderRepository;
 import io.github.inbox.order.persistence.OrderStatus;
+import io.github.inbox.order.support.CapturedLogs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,6 +44,7 @@ import static org.mockito.Mockito.when;
 class OrderServiceUnitTest {
 
     private static final Instant NOW = Instant.parse("2026-11-14T10:00:00Z");
+    private static final UUID EVENT_ID = UUID.fromString("0195f0a0-0000-7000-8000-000000000001");
 
     @Mock
     private OrderRepository repository;
@@ -98,6 +102,31 @@ class OrderServiceUnitTest {
     }
 
     @Test
+    @DisplayName("UT create() when the order is published should log order.created with order, customer and event id")
+    void create_whenOrderIsPublished_shouldLogOrderCreatedWithIds() {
+        // given
+        when(repository.save(any(OrderEntity.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 7L));
+        when(events.publish(eq(EventTypes.ORDER_CREATED), any())).thenReturn(EVENT_ID);
+        CreateOrderRequest request = new CreateOrderRequest(42L, "customer@example.com", "EUR",
+                List.of(new OrderLineRequest("sku-1", 2, new BigDecimal("10.50"))));
+
+        // when
+        List<JsonNode> lines;
+        try (CapturedLogs logs = CapturedLogs.of(OrderService.class)) {
+            tested.create(request);
+            lines = logs.lines();
+        }
+
+        // then
+        assertThat(lines).singleElement().satisfies(line -> {
+            assertThat(line.get("event.action").asText()).isEqualTo("order.created");
+            assertThat(line.get("orderId").asText()).isEqualTo("7");
+            assertThat(line.get("customerId").asText()).isEqualTo("42");
+            assertThat(line.get("eventId").asText()).isEqualTo(EVENT_ID.toString());
+        });
+    }
+
+    @Test
     @DisplayName("UT get() when order does not exist should throw OrderNotFoundException")
     void get_whenOrderDoesNotExist_shouldThrowOrderNotFoundException() {
         // given
@@ -141,6 +170,28 @@ class OrderServiceUnitTest {
         assertThat(event.getValue()).isInstanceOfSatisfying(OrderCancelledEvent.class, cancelled -> {
             assertThat(cancelled.reason()).isEqualTo("changed my mind");
             assertThat(cancelled.cancelledAt()).isEqualTo(NOW);
+        });
+    }
+
+    @Test
+    @DisplayName("UT cancel() when the cancellation is published should log order.cancelled with its event id")
+    void cancel_whenCancellationIsPublished_shouldLogOrderCancelledWithIds() {
+        // given
+        when(repository.findById(7L)).thenReturn(Optional.of(newOrder()));
+        when(events.publish(eq(EventTypes.ORDER_CANCELLED), any())).thenReturn(EVENT_ID);
+
+        // when
+        List<JsonNode> lines;
+        try (CapturedLogs logs = CapturedLogs.of(OrderService.class)) {
+            tested.cancel(7L, new CancelOrderRequest("changed my mind"));
+            lines = logs.lines();
+        }
+
+        // then
+        assertThat(lines).singleElement().satisfies(line -> {
+            assertThat(line.get("event.action").asText()).isEqualTo("order.cancelled");
+            assertThat(line.get("orderId").asText()).isEqualTo("7");
+            assertThat(line.get("eventId").asText()).isEqualTo(EVENT_ID.toString());
         });
     }
 
