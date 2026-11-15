@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProperty scope="context" name="appName" source="spring.application.name"/>
+    <springProperty scope="context" name="appVersion" source="app.version" defaultValue="unknown"/>
+    <springProperty scope="context" name="instanceId" source="app.instance-id" defaultValue="local"/>
+    <springProperty scope="context" name="deployEnv" source="app.environment" defaultValue="local"/>
+    <springProperty scope="context" name="jsonLogEnabled" source="app.logging.json.enabled" defaultValue="false"/>
+    <springProperty scope="context" name="jsonLogPath" source="app.logging.json.path" defaultValue="./logs"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p [%15.15t] %-40.40logger{39} [correlationId=%X{correlationId:-}] [eventId=%X{eventId:-}] : %m%n%wEx</pattern>
+        </encoder>
+    </appender>
+
+    <if condition='property("jsonLogEnabled").equals("true")'>
+        <then>
+            <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+                <file>${jsonLogPath}/${appName}/app.json</file>
+                <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                    <fileNamePattern>${jsonLogPath}/${appName}/app-%d{yyyy-MM-dd}.%i.json</fileNamePattern>
+                    <maxFileSize>50MB</maxFileSize>
+                    <maxHistory>7</maxHistory>
+                    <totalSizeCap>1GB</totalSizeCap>
+                </rollingPolicy>
+                <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+                    <providers>
+                        <timestamp>
+                            <fieldName>@timestamp</fieldName>
+                        </timestamp>
+                        <logLevel>
+                            <fieldName>log.level</fieldName>
+                        </logLevel>
+                        <message/>
+                        <loggerName>
+                            <fieldName>logger.name</fieldName>
+                        </loggerName>
+                        <threadName>
+                            <fieldName>thread.name</fieldName>
+                        </threadName>
+                        <mdc/>
+                        <logstashMarkers/>
+                        <stackTrace>
+                            <fieldName>error.stack_trace</fieldName>
+                        </stackTrace>
+                        <pattern>
+                            <pattern>
+                                {
+                                  "service.name": "${appName}",
+                                  "service.version": "${appVersion}",
+                                  "deployment.environment": "${deployEnv}",
+                                  "instance.id": "${instanceId}"
+                                }
+                            </pattern>
+                        </pattern>
+                    </providers>
+                </encoder>
+            </appender>
+
+            <root level="INFO">
+                <appender-ref ref="CONSOLE"/>
+                <appender-ref ref="JSON_FILE"/>
+            </root>
+        </then>
+        <else>
+            <root level="INFO">
+                <appender-ref ref="CONSOLE"/>
+            </root>
+        </else>
+    </if>
+</configuration>

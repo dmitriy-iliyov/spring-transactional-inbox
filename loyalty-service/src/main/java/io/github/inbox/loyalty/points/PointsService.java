@@ -3,6 +3,7 @@ package io.github.inbox.loyalty.points;
 import io.github.inbox.contract.OrderCancelledEvent;
 import io.github.inbox.loyalty.api.PointsBalanceResponse;
 import io.github.inbox.contract.OrderCreatedEvent;
+import net.logstash.logback.marker.Markers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -10,6 +11,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+
+import static io.github.inbox.contract.ObservabilityVocabulary.EVENT_ACTION;
+import static io.github.inbox.contract.ObservabilityVocabulary.POINTS_ACCRUED;
+import static io.github.inbox.contract.ObservabilityVocabulary.POINTS_REVERTED;
 
 /**
  * Keeps the ledger and the balances in step with order events.
@@ -88,6 +93,8 @@ public class PointsService {
                 .orElseGet(() -> new CustomerPointsEntity(customerId, now));
         balance.add(points, now);
         balances.save(balance);
-        log.debug("Order {} {}: {} points for customer {}", orderId, kind, points, customerId);
+        String action = LedgerEntryKind.ACCRUAL == kind ? POINTS_ACCRUED : POINTS_REVERTED;
+        log.info(Markers.append(EVENT_ACTION, action), "Order {} {}: {} points for customer {}",
+                orderId, kind, points, customerId);
     }
 }
