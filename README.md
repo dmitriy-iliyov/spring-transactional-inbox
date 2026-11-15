@@ -39,6 +39,7 @@ committed - never before, never lost.
 - [Keeping the inbox small](#-keeping-the-inbox-small)
 - [Quick start](#-quick-start)
 - [See the inbox at work](#-see-the-inbox-at-work)
+- [Logs](#-logs)
 - [Tests](#-tests)
 - [Modules](#-modules)
 
@@ -289,8 +290,40 @@ curl http://localhost:8081/api/v1/customers/42/points   # same balance as before
 curl http://localhost:8025/api/v1/messages              # still one confirmation
 ```
 
+The `loyalty-service` console shows the decision, under the event's id:
+
+```text
+... [eventId=0195f0a0-...] : Event already consumed, skipped
+```
+
 To see the second line of defence, delete the event's row from `inbox_events` in the `loyalty` database and send it once
 more: the inbox no longer knows it, and the points ledger still refuses a second accrual.
+
+## 📜 Logs
+
+Every service logs readable lines to the console and, when `LOG_JSON_ENABLED=true` (the default in the `prod`
+profile), JSON lines to `logs/<service>/app.json` for a log shipper to pick up. Field names are the same in every
+service, so one query finds an order, a customer or an event across all of them.
+
+| Field | Where it comes from |
+|-------|---------------------|
+| `service.name`, `service.version`, `instance.id`, `deployment.environment` | the application name, the build version, `HOSTNAME`, `DEPLOY_ENV` |
+| `correlationId` | the `X-Correlation-Id` request header, or a generated one; echoed back in the response |
+| `eventId`, `eventType` | the `oncebox_event_id` / `oncebox_event_type` headers of the consumed record |
+| `orderId`, `customerId` | the order the line is about |
+| `kafka.topic`, `kafka.partition`, `kafka.offset` | the consumed record |
+| `event.action` | the step of the flow the line marks, below |
+
+| `event.action` | Written by | When |
+|----------------|------------|------|
+| `order.created`, `order.cancelled` | `order-service` | the order and its event are stored |
+| `inbox.event.consumed` | `loyalty-service` | the event was handled and committed with its inbox record |
+| `inbox.event.skipped` | `loyalty-service` | the inbox already knew the event id - a redelivery or a replay |
+| `inbox.event.failed` | `loyalty-service` | handling threw; the record goes back to the error handler |
+| `points.accrued`, `points.reverted` | `loyalty-service` | a ledger entry is written |
+
+A redelivered event is easy to find: `event.action:"inbox.event.skipped"` together with its `eventId` shows which
+consumer saw it again and when.
 
 ## 🧪 Tests
 
