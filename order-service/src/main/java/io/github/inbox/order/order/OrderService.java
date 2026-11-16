@@ -35,12 +35,18 @@ public class OrderService {
     private final OrderRepository repository;
     private final OrderMapper mapper;
     private final EventPublisher events;
+    private final OrderMetrics metrics;
     private final Clock clock;
 
-    public OrderService(OrderRepository repository, OrderMapper mapper, EventPublisher events, Clock clock) {
+    public OrderService(OrderRepository repository,
+                        OrderMapper mapper,
+                        EventPublisher events,
+                        OrderMetrics metrics,
+                        Clock clock) {
         this.repository = repository;
         this.mapper = mapper;
         this.events = events;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -60,6 +66,7 @@ public class OrderService {
         UUID eventId = events.publish(EventTypes.ORDER_CREATED, mapper.toCreatedEvent(stored));
         log.info(fields(ORDER_CREATED, stored, eventId), "Order {} created for customer {}, event {}",
                 stored.getId(), stored.getCustomerId(), eventId);
+        metrics.orderPlaced();
         return mapper.toResponse(stored);
     }
 
@@ -98,6 +105,7 @@ public class OrderService {
         UUID eventId = events.publish(EventTypes.ORDER_CANCELLED, mapper.toCancelledEvent(order));
         log.info(fields(ORDER_CANCELLED, order, eventId), "Order {} of customer {} cancelled, event {}",
                 order.getId(), order.getCustomerId(), eventId);
+        metrics.orderCancelled();
         return mapper.toResponse(order);
     }
 

@@ -14,6 +14,7 @@ import io.github.inbox.order.persistence.OrderLineEntity;
 import io.github.inbox.order.persistence.OrderRepository;
 import io.github.inbox.order.persistence.OrderStatus;
 import io.github.inbox.order.support.CapturedLogs;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,11 +53,14 @@ class OrderServiceUnitTest {
     @Mock
     private EventPublisher events;
 
+    private SimpleMeterRegistry meters;
     private OrderService tested;
 
     @BeforeEach
     void setUp() {
-        tested = new OrderService(repository, new OrderMapper(), events, Clock.fixed(NOW, ZoneOffset.UTC));
+        meters = new SimpleMeterRegistry();
+        tested = new OrderService(repository, new OrderMapper(), events, new OrderMetrics(meters),
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -127,6 +131,22 @@ class OrderServiceUnitTest {
     }
 
     @Test
+    @DisplayName("UT create() when order is stored should count it in orders.placed")
+    void create_whenOrderIsStored_shouldCountOrderCreated() {
+        // given
+        when(repository.save(any(OrderEntity.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 7L));
+        CreateOrderRequest request = new CreateOrderRequest(42L, "customer@example.com", "EUR",
+                List.of(new OrderLineRequest("sku-1", 2, new BigDecimal("10.50"))));
+
+        // when
+        tested.create(request);
+
+        // then
+        assertThat(count(OrderMetrics.ORDERS_PLACED)).isEqualTo(1.0);
+        assertThat(count(OrderMetrics.ORDERS_CANCELLED)).isZero();
+    }
+
+    @Test
     @DisplayName("UT get() when order does not exist should throw OrderNotFoundException")
     void get_whenOrderDoesNotExist_shouldThrowOrderNotFoundException() {
         // given
@@ -174,6 +194,20 @@ class OrderServiceUnitTest {
     }
 
     @Test
+    @DisplayName("UT cancel() when order is created should count it in orders.cancelled")
+    void cancel_whenOrderIsCreated_shouldCountOrderCancelled() {
+        // given
+        when(repository.findById(7L)).thenReturn(Optional.of(newOrder()));
+
+        // when
+        tested.cancel(7L, new CancelOrderRequest("changed my mind"));
+
+        // then
+        assertThat(count(OrderMetrics.ORDERS_CANCELLED)).isEqualTo(1.0);
+        assertThat(count(OrderMetrics.ORDERS_PLACED)).isZero();
+    }
+
+    @Test
     @DisplayName("UT cancel() when the cancellation is published should log order.cancelled with its event id")
     void cancel_whenCancellationIsPublished_shouldLogOrderCancelledWithIds() {
         // given
@@ -209,6 +243,7 @@ class OrderServiceUnitTest {
                 .hasMessage("Order 7 is already cancelled");
         assertThat(order.getCancelReason()).isEqualTo("first");
         verifyNoInteractions(events);
+        assertThat(count(OrderMetrics.ORDERS_CANCELLED)).isZero();
     }
 
     @Test
@@ -235,6 +270,10 @@ class OrderServiceUnitTest {
         // when / then
         assertThatThrownBy(() -> tested.cancel(7L, new CancelOrderRequest(null)))
                 .isInstanceOf(OrderNotFoundException.class);
+    }
+
+    private double count(String meter) {
+        return meters.get(meter).counter().count();
     }
 
     private static OrderEntity newOrder() {
