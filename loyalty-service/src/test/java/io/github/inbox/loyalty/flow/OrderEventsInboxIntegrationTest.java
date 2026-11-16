@@ -17,9 +17,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -38,11 +41,16 @@ import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Order events sent to Kafka as the outbox sends them, consumed through the transactional inbox.
- * Every case uses customers and orders of its own, so cases do not see each other's points.
+ * Every case uses customers and orders of its own, so cases do not see each other's points; counters on
+ * {@code /actuator/prometheus} are shared by all cases, so they are compared as deltas.
  */
+@AutoConfigureMockMvc
+@AutoConfigureObservability(tracing = false)
 class OrderEventsInboxIntegrationTest extends ApplicationIntegrationTest {
 
     private static final AtomicLong IDS = new AtomicLong(1_000);
@@ -51,17 +59,24 @@ class OrderEventsInboxIntegrationTest extends ApplicationIntegrationTest {
     @MockitoSpyBean
     private PointsService pointsService;
 
+    private static final String CONSUMED = "inbox_events_total{type=\"consumed\"}";
+    private static final String DUPLICATES = "inbox_events_total{type=\"rejected_duplicates\"}";
+    private static final String POINTS_ACCRUED = "loyalty_points_accrued_total";
+
     private final CustomerPointsRepository balances;
     private final JdbcTemplate jdbc;
+    private final MockMvc mockMvc;
     private final OrderEventSender sender;
     private RecordingKafkaConsumer deadLetters;
 
     OrderEventsInboxIntegrationTest(CustomerPointsRepository balances,
                                     JdbcTemplate jdbc,
+                                    MockMvc mockMvc,
                                     KafkaTemplate<String, String> kafkaTemplate,
                                     ObjectMapper objectMapper) {
         this.balances = balances;
         this.jdbc = jdbc;
+        this.mockMvc = mockMvc;
         this.sender = new OrderEventSender(kafkaTemplate, objectMapper);
     }
 
@@ -111,6 +126,32 @@ class OrderEventsInboxIntegrationTest extends ApplicationIntegrationTest {
         // then
         awaitBalance(customerId, 35);
         assertThat(ledgerEntries(customerId)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("IT prometheus when an event is redelivered should count one duplicate and accrue its points once")
+    void prometheus_whenEventIsRedelivered_shouldCountDuplicateAndAccrueOnce() throws Exception {
+        // given
+        long customerId = IDS.incrementAndGet();
+        UUID eventId = UUID.randomUUID();
+        String samePartition = String.valueOf(customerId);
+        OrderCreatedEvent event = created(IDS.incrementAndGet(), customerId, "30.00");
+        String before = scrape();
+
+        // when
+        sender.send(eventId, EventTypes.ORDER_CREATED, samePartition, event);
+        sender.send(eventId, EventTypes.ORDER_CREATED, samePartition, event);
+        // consumed after the repeat, so once it is counted the repeat has been handled too
+        sender.send(UUID.randomUUID(), EventTypes.ORDER_CREATED, samePartition,
+                created(IDS.incrementAndGet(), customerId, "5.00"));
+
+        // then
+        awaitAtMost().untilAsserted(() -> {
+            String after = scrape();
+            assertThat(delta(before, after, CONSUMED)).as(CONSUMED).isEqualTo(2.0);
+            assertThat(delta(before, after, DUPLICATES)).as(DUPLICATES).isEqualTo(1.0);
+            assertThat(delta(before, after, POINTS_ACCRUED)).as(POINTS_ACCRUED).isEqualTo(35.0);
+        });
     }
 
     @Test
@@ -238,6 +279,27 @@ class OrderEventsInboxIntegrationTest extends ApplicationIntegrationTest {
 
     private long ledgerEntries(long customerId) {
         return jdbc.queryForObject("SELECT count(*) FROM points_ledger WHERE customer_id = ?", Long.class, customerId);
+    }
+
+    private String scrape() throws Exception {
+        return mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+    }
+
+    private static double delta(String before, String after, String series) {
+        return value(after, series) - value(before, series);
+    }
+
+    // a series not written yet reads as zero, as Prometheus treats a counter that has not appeared
+    private static double value(String scrape, String series) {
+        return scrape.lines()
+                .filter(line -> line.startsWith(series + " "))
+                .mapToDouble(line -> Double.parseDouble(line.substring(series.length() + 1).trim()))
+                .findFirst()
+                .orElse(0.0);
     }
 
     private static OrderCreatedEvent created(long orderId, long customerId, String total) {
