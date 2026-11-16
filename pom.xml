@@ -50,7 +50,7 @@
         <testcontainers.version>1.21.3</testcontainers.version>
         <greenmail.version>2.1.13</greenmail.version>
         <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
-        <jacoco.version>0.8.14</jacoco.version>
+        <jacoco.version>0.8.16</jacoco.version>
         <jacoco.minimum-line-coverage>0.80</jacoco.minimum-line-coverage>
     </properties>
 
