@@ -32,15 +32,18 @@ public class PointsService {
     private final CustomerPointsRepository balances;
     private final LedgerEntryRepository ledger;
     private final PointsPolicy policy;
+    private final PointsMetrics metrics;
     private final Clock clock;
 
     public PointsService(CustomerPointsRepository balances,
                          LedgerEntryRepository ledger,
                          PointsPolicy policy,
+                         PointsMetrics metrics,
                          Clock clock) {
         this.balances = balances;
         this.ledger = ledger;
         this.policy = policy;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -93,6 +96,7 @@ public class PointsService {
                 .orElseGet(() -> new CustomerPointsEntity(customerId, now));
         balance.add(points, now);
         balances.save(balance);
+        metrics.recorded(kind, points);
         String action = LedgerEntryKind.ACCRUAL == kind ? POINTS_ACCRUED : POINTS_REVERTED;
         log.info(Markers.append(EVENT_ACTION, action), "Order {} {}: {} points for customer {}",
                 orderId, kind, points, customerId);

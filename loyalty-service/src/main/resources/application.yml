@@ -33,6 +33,16 @@ spring:
 server:
   port: ${SERVER_PORT:8081}
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 oncebox:
   thread-pool-size: 2
   tables:
@@ -55,6 +65,8 @@ oncebox:
       ttl: 14d
       polling:
         initial-delay: 1m
+    metrics:
+      enabled: true
 
 app:
   version: '@project.version@'

@@ -3,6 +3,7 @@ package io.github.inbox.loyalty.points;
 import io.github.inbox.contract.OrderCancelledEvent;
 import io.github.inbox.contract.OrderCreatedEvent;
 import io.github.inbox.contract.OrderLine;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,11 +40,14 @@ class PointsServiceUnitTest {
     @Mock
     private LedgerEntryRepository ledger;
 
+    private SimpleMeterRegistry meters;
     private PointsService tested;
 
     @BeforeEach
     void setUp() {
-        tested = new PointsService(balances, ledger, new PointsPolicy(), Clock.fixed(NOW, ZoneOffset.UTC));
+        meters = new SimpleMeterRegistry();
+        tested = new PointsService(balances, ledger, new PointsPolicy(), new PointsMetrics(meters),
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -64,6 +68,7 @@ class PointsServiceUnitTest {
         CustomerPointsEntity balance = savedBalance();
         assertThat(balance.getBalance()).isEqualTo(21);
         assertThat(balance.getUpdatedAt()).isEqualTo(NOW);
+        assertThat(count(PointsMetrics.POINTS_ACCRUED)).isEqualTo(21.0);
     }
 
     @Test
@@ -118,6 +123,7 @@ class PointsServiceUnitTest {
         assertThat(entry.getKind()).isEqualTo(LedgerEntryKind.REVERSAL);
         assertThat(entry.getPoints()).isEqualTo(-21);
         assertThat(savedBalance().getBalance()).isZero();
+        assertThat(count(PointsMetrics.POINTS_REVERTED)).isEqualTo(21.0);
     }
 
     @Test
@@ -149,6 +155,7 @@ class PointsServiceUnitTest {
         // then
         verify(ledger, never()).save(any());
         verifyNoInteractions(balances);
+        assertThat(count(PointsMetrics.POINTS_ACCRUED)).isZero();
     }
 
     @Test
@@ -188,6 +195,10 @@ class PointsServiceUnitTest {
         assertThatThrownBy(() -> tested.balance(CUSTOMER_ID))
                 .isInstanceOf(CustomerPointsNotFoundException.class)
                 .hasMessage("Customer 42 has no points yet");
+    }
+
+    private double count(String meter) {
+        return meters.get(meter).counter().count();
     }
 
     private LedgerEntryEntity savedLedgerEntry() {
