@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sender address validation at startup: `notification.mail.from` must be non-blank and a valid e-mail address;
+  invalid configuration prevents `notification-service` from starting (#23, @demonipun)
 - Structured JSON logs with shared field names, `X-Correlation-Id` on every request, and consumed / skipped /
   failed events logged with their ids in `loyalty-service` (#25, @dmitriy-iliyov)
 

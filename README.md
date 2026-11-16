@@ -153,6 +153,10 @@ sending, so a replay older than the inbox still finds the earlier confirmation. 
 write timeouts (5 s, 10 s, 10 s), so a mail server that stops answering fails the send instead of holding the
 listener thread forever.
 
+The sender address, `notification.mail.from` (`MAIL_FROM`, default `orders@example.com`), must be non-blank and a
+valid e-mail address. An invalid value prevents `notification-service` from starting and identifies the property
+that needs fixing, so it is caught before the service consumes any order events.
+
 ## 🛡️ Delivery guarantees
 
 | Hop | Guarantee | How |
