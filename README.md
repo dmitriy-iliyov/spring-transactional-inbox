@@ -40,6 +40,7 @@ committed - never before, never lost.
 - [Quick start](#-quick-start)
 - [See the inbox at work](#-see-the-inbox-at-work)
 - [Logs](#-logs)
+- [Metrics](#-metrics)
 - [Tests](#-tests)
 - [Modules](#-modules)
 
@@ -328,6 +329,30 @@ service, so one query finds an order, a customer or an event across all of them.
 
 A redelivered event is easy to find: `event.action:"inbox.event.skipped"` together with its `eventId` shows which
 consumer saw it again and when.
+
+## 📈 Metrics
+
+Every service exposes `/actuator/prometheus`, plus `/actuator/health` with the `liveness` and `readiness` groups.
+The inbox and outbox meters come from oncebox (`oncebox-metrics`); the business meters are the services' own.
+
+| Meter | Service | What it counts |
+|-------|---------|----------------|
+| `inbox_events_total{type}` | `loyalty-service`, `notification-service` | `consumed`, `rejected_duplicates` (a redelivery or a replay the inbox stopped), `failed`, `cleaned` |
+| `outbox_events_rate_total{event_type}` | `order-service` | events sent to Kafka |
+| `outbox_events_by_status`, `outbox_dlq_events` | `order-service` | events waiting in the outbox and in its DLQ (cached for 15 s) |
+| `oncebox_*_tasks_total`, `oncebox_task_processing_duration_seconds` | all | runs of the background tasks: polling, clean-up, stuck recovery |
+| `orders_placed_total`, `orders_cancelled_total` | `order-service` | orders committed together with their event |
+| `loyalty_points_accrued_total`, `loyalty_points_reverted_total` | `loyalty-service` | points, counted when the inbox transaction commits |
+| `notifications_sent_total`, `notifications_failed_total` | `notification-service` | confirmations the mail server accepted or refused |
+
+Business counters move only on commit, so a rolled back attempt that Kafka redelivers is counted once. The share
+of redeliveries a consumer sees is `rate(inbox_events_total{type="rejected_duplicates"}[5m])` against
+`rate(inbox_events_total{type="consumed"}[5m])`. A confirmation counted in `notifications_failed_total` is not
+retried - its event is already in the inbox - so that counter is the number of customers left without one.
+
+```bash
+curl -s localhost:8081/actuator/prometheus | grep inbox_events_total
+```
 
 ## 🧪 Tests
 

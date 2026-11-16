@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   malformed or unsupported records individually to `orders.events.DLT` (#24, @Nip27)
 - Sender address validation at startup: `notification.mail.from` must be non-blank and a valid e-mail address;
   invalid configuration prevents `notification-service` from starting (#23, @demonipun)
+- Prometheus metrics in every service: `/actuator/prometheus` with the oncebox inbox and outbox meters, orders
+  placed and cancelled, loyalty points accrued and reverted, confirmations sent and failed; health with liveness
+  and readiness groups (@dmitriy-iliyov)
 - Structured JSON logs with shared field names, `X-Correlation-Id` on every request, and consumed / skipped /
   failed events logged with their ids in `loyalty-service` (#25, @dmitriy-iliyov)
 
