@@ -29,6 +29,26 @@ public final class OrderEventSender {
         send(eventId, eventType, null, payload);
     }
 
+    /**
+     * Sends the payload with its event type but without an event id header, as a producer outside the outbox might.
+     */
+    public void sendWithoutEventId(String eventType, Object payload) {
+        sendWithoutEventId(eventType, null, payload);
+    }
+
+    public void sendWithoutEventId(String eventType, String key, Object payload) {
+        try {
+            ProducerRecord<String, String> record = new ProducerRecord<>(
+                    Topics.ORDER_EVENTS, key, objectMapper.writeValueAsString(payload));
+            record.headers().add("oncebox_event_type", eventType.getBytes(StandardCharsets.UTF_8));
+            record.headers().add("oncebox_event_payload_type",
+                    payload.getClass().getName().getBytes(StandardCharsets.UTF_8));
+            kafkaTemplate.send(record).get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not send event", e);
+        }
+    }
+
     public void send(UUID eventId, String eventType, String key, Object payload) {
         try {
             ProducerRecord<String, String> record = new ProducerRecord<>(

@@ -42,6 +42,17 @@ public final class RecordingKafkaConsumer implements AutoCloseable {
                 .findFirst();
     }
 
+    /**
+     * Polls once and returns the record whose JSON value has {@code field} equal to {@code value}, if seen so far.
+     */
+    public Optional<ConsumerRecord<String, String>> findByPayloadField(String field, Object value) {
+        consumer.poll(Duration.ofMillis(200)).forEach(seen::add);
+        String needle = "\"%s\":%s".formatted(field, value);
+        return seen.stream()
+                .filter(record -> record.value() != null && record.value().contains(needle))
+                .findFirst();
+    }
+
     public static String header(ConsumerRecord<String, String> record, String name) {
         Header header = record.headers().lastHeader(name);
         return header == null ? null : new String(header.value(), StandardCharsets.UTF_8);

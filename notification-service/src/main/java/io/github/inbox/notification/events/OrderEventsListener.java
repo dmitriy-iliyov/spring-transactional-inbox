@@ -10,9 +10,11 @@ import io.github.inbox.notification.mail.OrderConfirmationMailer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.listener.BatchListenerFailedException;
 import org.springframework.messaging.Message;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -36,8 +38,31 @@ public class OrderEventsListener {
     }
 
     @KafkaListener(topics = Topics.ORDER_EVENTS, containerFactory = "inboxKafkaListenerContainerFactory")
-    public void onOrderEvent(Message<?> message) {
-        inbox.consume(message, OrderEventsListener::eventId, this::handle);
+    public void onOrderEvent(List<Message<?>> messages) {
+        for (int i = 0; i < messages.size(); i++) {
+            Message<?> message = messages.get(i);
+            try {
+                validate(message);
+            } catch (MalformedEventException | UnsupportedEventException e) {
+                if (i > 0) {
+                    inbox.consume(messages.subList(0, i), OrderEventsListener::eventId, this::handleAll);
+                }
+                throw new BatchListenerFailedException(e.getMessage(), e, i);
+            }
+        }
+        inbox.consume(messages, OrderEventsListener::eventId, this::handleAll);
+    }
+
+    public void onOrderEvents(List<Message<?>> messages) {
+        onOrderEvent(messages);
+    }
+
+    private static void validate(Message<?> message) {
+        eventId(message);
+        Object payload = message.getPayload();
+        if (!(payload instanceof OrderCreatedEvent || payload instanceof OrderCancelledEvent)) {
+            throw new UnsupportedEventException(payload);
+        }
     }
 
     private static UUID eventId(Message<?> message) {
@@ -45,6 +70,12 @@ public class OrderEventsListener {
             return OnceboxHeadersUtils.extractId(message);
         } catch (IllegalArgumentException e) {
             throw new MalformedEventException("Message without a usable event id: " + e.getMessage(), e);
+        }
+    }
+
+    private void handleAll(List<Message<?>> messages) {
+        for (Message<?> message : messages) {
+            handle(message);
         }
     }
 

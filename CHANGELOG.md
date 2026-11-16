@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Batch listener in `notification-service`: consumes order events in batches of up to 50 records, routing
+  malformed or unsupported records individually to `orders.events.DLT` (#24, @Nip27)
 - Sender address validation at startup: `notification.mail.from` must be non-blank and a valid e-mail address;
   invalid configuration prevents `notification-service` from starting (#23, @demonipun)
 - Structured JSON logs with shared field names, `X-Correlation-Id` on every request, and consumed / skipped /

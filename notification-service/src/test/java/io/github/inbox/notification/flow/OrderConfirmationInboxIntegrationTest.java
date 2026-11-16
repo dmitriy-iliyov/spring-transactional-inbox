@@ -5,18 +5,26 @@ import io.github.inbox.contract.EventTypes;
 import io.github.inbox.contract.OrderCancelledEvent;
 import io.github.inbox.contract.OrderCreatedEvent;
 import io.github.inbox.contract.OrderLine;
+import io.github.inbox.contract.Topics;
 import io.github.inbox.notification.support.ApplicationIntegrationTest;
+import io.github.inbox.notification.support.Containers;
 import io.github.inbox.notification.support.MailServer;
 import io.github.inbox.notification.support.OrderEventSender;
+import io.github.inbox.notification.support.RecordingKafkaConsumer;
 import jakarta.mail.internet.MimeMessage;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.MessageListenerContainer;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -34,12 +42,28 @@ class OrderConfirmationInboxIntegrationTest extends ApplicationIntegrationTest {
 
     private final JdbcTemplate jdbc;
     private final OrderEventSender sender;
+    private final KafkaListenerEndpointRegistry registry;
+    private RecordingKafkaConsumer deadLetters;
 
     OrderConfirmationInboxIntegrationTest(JdbcTemplate jdbc,
                                           KafkaTemplate<String, String> kafkaTemplate,
-                                          ObjectMapper objectMapper) {
+                                          ObjectMapper objectMapper,
+                                          KafkaListenerEndpointRegistry registry) {
         this.jdbc = jdbc;
         this.sender = new OrderEventSender(kafkaTemplate, objectMapper);
+        this.registry = registry;
+    }
+
+    @BeforeEach
+    void setUp() {
+        deadLetters = new RecordingKafkaConsumer(Containers.KAFKA.getBootstrapServers(), Topics.ORDER_EVENTS + ".DLT");
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (deadLetters != null) {
+            deadLetters.close();
+        }
     }
 
     @Test
@@ -86,6 +110,104 @@ class OrderConfirmationInboxIntegrationTest extends ApplicationIntegrationTest {
     }
 
     @Test
+    @DisplayName("IT order-created when duplicate event id within one batch should send the confirmation once")
+    void orderCreated_whenDuplicateEventIdWithinOneBatch_shouldSendOnce() {
+        // given
+        long orderId = IDS.incrementAndGet();
+        String recipient = "customer-%d@example.com".formatted(orderId);
+        String marker = "marker-%d@example.com".formatted(orderId);
+        String samePartition = recipient;
+        UUID eventId = UUID.randomUUID();
+        OrderCreatedEvent event = created(orderId, recipient);
+
+        pauseListener();
+        try {
+            sender.send(eventId, EventTypes.ORDER_CREATED, samePartition, event);
+            sender.send(eventId, EventTypes.ORDER_CREATED, samePartition, event);
+            sender.send(UUID.randomUUID(), EventTypes.ORDER_CREATED, samePartition,
+                    created(IDS.incrementAndGet(), marker));
+        } finally {
+            resumeListener();
+        }
+
+        // then
+        awaitAtMost().until(() -> MailServer.receivedBy(marker).size() == 1);
+        assertThat(MailServer.receivedBy(recipient)).hasSize(1);
+        assertThat(notificationsOf(eventId)).isEqualTo(1);
+        assertThat(isInInbox(eventId)).isTrue();
+    }
+
+    @Test
+    @DisplayName("IT order-created when duplicate event id across two batches should send the confirmation once")
+    void orderCreated_whenDuplicateEventIdAcrossTwoBatches_shouldSendOnce() {
+        // given
+        long orderId = IDS.incrementAndGet();
+        String recipient = "customer-%d@example.com".formatted(orderId);
+        String marker = "marker-%d@example.com".formatted(orderId);
+        String samePartition = recipient;
+        UUID eventId = UUID.randomUUID();
+        OrderCreatedEvent event = created(orderId, recipient);
+
+        // batch 1
+        sender.send(eventId, EventTypes.ORDER_CREATED, samePartition, event);
+        awaitAtMost().until(() -> MailServer.receivedBy(recipient).size() == 1);
+
+        // batch 2
+        sender.send(eventId, EventTypes.ORDER_CREATED, samePartition, event);
+        sender.send(UUID.randomUUID(), EventTypes.ORDER_CREATED, samePartition,
+                created(IDS.incrementAndGet(), marker));
+
+        // then
+        awaitAtMost().until(() -> MailServer.receivedBy(marker).size() == 1);
+        assertThat(MailServer.receivedBy(recipient)).hasSize(1);
+        assertThat(notificationsOf(eventId)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("IT order-created when malformed record in middle of batch should mail valid ones and route bad to DLT")
+    void orderCreated_whenMalformedRecordInMiddleOfBatch_shouldMailValidAndRouteBadToDlt() {
+        // given
+        long orderId1 = IDS.incrementAndGet();
+        long badOrderId = IDS.incrementAndGet();
+        long orderId2 = IDS.incrementAndGet();
+
+        String recipient1 = "customer-%d@example.com".formatted(orderId1);
+        String recipient2 = "customer-%d@example.com".formatted(orderId2);
+        String samePartition = recipient1;
+
+        UUID eventId1 = UUID.randomUUID();
+        UUID eventId2 = UUID.randomUUID();
+
+        OrderCreatedEvent event1 = created(orderId1, recipient1);
+        OrderCreatedEvent badEvent = created(badOrderId, "bad@example.com");
+        OrderCreatedEvent event2 = created(orderId2, recipient2);
+
+        pauseListener();
+        try {
+            sender.send(eventId1, EventTypes.ORDER_CREATED, samePartition, event1);
+            sender.sendWithoutEventId(EventTypes.ORDER_CREATED, samePartition, badEvent);
+            sender.send(eventId2, EventTypes.ORDER_CREATED, samePartition, event2);
+        } finally {
+            resumeListener();
+        }
+
+        // then
+        awaitAtMost().until(() -> MailServer.receivedBy(recipient1).size() == 1);
+        awaitAtMost().until(() -> MailServer.receivedBy(recipient2).size() == 1);
+        assertThat(MailServer.receivedBy(recipient1)).hasSize(1);
+        assertThat(MailServer.receivedBy(recipient2)).hasSize(1);
+
+        awaitAtMost().until(() -> deadLetters.findByPayloadField("orderId", badOrderId), Optional::isPresent);
+        assertThat(deadLetters.findByHeader("oncebox_event_id", eventId1.toString())).isEmpty();
+        assertThat(deadLetters.findByHeader("oncebox_event_id", eventId2.toString())).isEmpty();
+
+        assertThat(isInInbox(eventId1)).isTrue();
+        assertThat(isInInbox(eventId2)).isTrue();
+        assertThat(notificationsOf(eventId1)).isEqualTo(1);
+        assertThat(notificationsOf(eventId2)).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("IT order-cancelled when consumed should record the event and send nothing")
     void orderCancelled_whenConsumed_shouldSendNothing() {
         // given
@@ -123,6 +245,15 @@ class OrderConfirmationInboxIntegrationTest extends ApplicationIntegrationTest {
         awaitAtMost().until(() -> MailServer.receivedBy(marker).size() == 1);
         assertThat(MailServer.receivedBy(recipient)).hasSize(1);
         assertThat(notificationsOf(eventId)).isEqualTo(1);
+    }
+
+    private void pauseListener() {
+        registry.getListenerContainers().forEach(MessageListenerContainer::pause);
+        awaitAtMost().until(() -> registry.getListenerContainers().stream().allMatch(MessageListenerContainer::isContainerPaused));
+    }
+
+    private void resumeListener() {
+        registry.getListenerContainers().forEach(MessageListenerContainer::resume);
     }
 
     private long notificationsOf(UUID eventId) {
