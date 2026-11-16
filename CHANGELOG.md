@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Bumped the JaCoCo plugin from 0.8.14 to 0.8.16 (#19, @ahin042)
+- Bumped Spring Boot from 3.5.14 to 3.5.16 (#18, @ahin042)
 
 ## [0.1.0] - 2026-11-14
 
