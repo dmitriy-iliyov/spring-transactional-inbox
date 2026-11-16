@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON logs with shared field names, `X-Correlation-Id` on every request, and consumed / skipped /
   failed events logged with their ids in `loyalty-service` (#25, @dmitriy-iliyov)
 
+### Changed
+
+- Bumped the JaCoCo plugin from 0.8.14 to 0.8.16 (#19, @ahin042)
+
 ## [0.1.0] - 2026-11-14
 
 ### Added
