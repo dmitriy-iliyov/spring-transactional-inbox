@@ -4,6 +4,7 @@ import io.github.inbox.contract.OrderCreatedEvent;
 import io.github.inbox.contract.OrderLine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
@@ -28,15 +29,18 @@ public class OrderConfirmationMailer {
     private final JavaMailSender mailSender;
     private final NotificationRepository notifications;
     private final MailProperties properties;
+    private final NotificationMetrics metrics;
     private final Clock clock;
 
     public OrderConfirmationMailer(JavaMailSender mailSender,
                                    NotificationRepository notifications,
                                    MailProperties properties,
+                                   NotificationMetrics metrics,
                                    Clock clock) {
         this.mailSender = mailSender;
         this.notifications = notifications;
         this.properties = properties;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -51,7 +55,13 @@ public class OrderConfirmationMailer {
         message.setTo(order.customerEmail());
         message.setSubject(subject(order));
         message.setText(body(order));
-        mailSender.send(message);
+        try {
+            mailSender.send(message);
+        } catch (MailException e) {
+            metrics.failed();
+            throw e;
+        }
+        metrics.sent();
         notifications.save(new NotificationEntity(eventId, order.orderId(), order.customerEmail(), message.getSubject(),
                 clock.instant()));
     }

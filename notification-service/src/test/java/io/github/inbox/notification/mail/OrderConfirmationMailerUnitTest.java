@@ -2,6 +2,7 @@ package io.github.inbox.notification.mail;
 
 import io.github.inbox.contract.OrderCreatedEvent;
 import io.github.inbox.contract.OrderLine;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -41,12 +42,14 @@ class OrderConfirmationMailerUnitTest {
     @Mock
     private NotificationRepository notifications;
 
+    private SimpleMeterRegistry meters;
     private OrderConfirmationMailer tested;
 
     @BeforeEach
     void setUp() {
+        meters = new SimpleMeterRegistry();
         tested = new OrderConfirmationMailer(mailSender, notifications, new MailProperties("orders@example.com"),
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                new NotificationMetrics(meters), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -66,6 +69,8 @@ class OrderConfirmationMailerUnitTest {
         verify(notifications).save(recorded.capture());
         assertThat(recorded.getValue().getEventId()).isEqualTo(EVENT_ID);
         assertThat(recorded.getValue().getSentAt()).isEqualTo(NOW);
+        assertThat(count(NotificationMetrics.NOTIFICATIONS_SENT)).isEqualTo(1.0);
+        assertThat(count(NotificationMetrics.NOTIFICATIONS_FAILED)).isZero();
     }
 
     @Test
@@ -78,6 +83,8 @@ class OrderConfirmationMailerUnitTest {
         assertThatThrownBy(() -> tested.sendConfirmation(EVENT_ID, order()))
                 .isInstanceOf(MailSendException.class);
         verify(notifications, never()).save(any());
+        assertThat(count(NotificationMetrics.NOTIFICATIONS_FAILED)).isEqualTo(1.0);
+        assertThat(count(NotificationMetrics.NOTIFICATIONS_SENT)).isZero();
     }
 
     @Test
@@ -92,6 +99,11 @@ class OrderConfirmationMailerUnitTest {
         // then
         verifyNoInteractions(mailSender);
         verify(notifications, never()).save(any());
+        assertThat(count(NotificationMetrics.NOTIFICATIONS_SENT)).isZero();
+    }
+
+    private double count(String meter) {
+        return meters.get(meter).counter().count();
     }
 
     private static OrderCreatedEvent order() {

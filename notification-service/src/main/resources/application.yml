@@ -44,6 +44,16 @@ spring:
 server:
   port: ${SERVER_PORT:8082}
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 notification:
   mail:
     from: ${MAIL_FROM:orders@example.com}
@@ -70,6 +80,8 @@ oncebox:
       ttl: 14d
       polling:
         initial-delay: 1m
+    metrics:
+      enabled: true
 
 app:
   version: '@project.version@'
