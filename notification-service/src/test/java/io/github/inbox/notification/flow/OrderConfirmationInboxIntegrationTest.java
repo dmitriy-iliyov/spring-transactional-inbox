@@ -16,6 +16,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
+import org.springframework.mail.MailSendException;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -39,6 +47,9 @@ class OrderConfirmationInboxIntegrationTest extends ApplicationIntegrationTest {
 
     private static final AtomicLong IDS = new AtomicLong(1_000);
     private static final Instant NOW = Instant.parse("2026-11-14T10:00:00Z");
+
+    @MockitoSpyBean
+    private JavaMailSender mailSender;
 
     private final JdbcTemplate jdbc;
     private final OrderEventSender sender;
@@ -64,6 +75,33 @@ class OrderConfirmationInboxIntegrationTest extends ApplicationIntegrationTest {
         if (deadLetters != null) {
             deadLetters.close();
         }
+        reset(mailSender);
+    }
+
+    @Test
+    @DisplayName("IT order-created when sending fails once should not send it on redelivery")
+    void orderCreated_whenSendingFailsOnce_shouldNotSendOnRedelivery() {
+        // given
+        long orderId = IDS.incrementAndGet();
+        String recipient = "customer-%d@example.com".formatted(orderId);
+        String marker = "marker-%d@example.com".formatted(orderId);
+        UUID eventId = UUID.randomUUID();
+        OrderCreatedEvent event = created(orderId, recipient);
+
+        doThrow(new MailSendException("mail server refused"))
+                .doCallRealMethod()
+                .when(mailSender).send(any(SimpleMailMessage.class));
+
+        // when - the failing event, then a valid one on the same partition
+        sender.send(eventId, EventTypes.ORDER_CREATED, recipient, event);
+        sender.send(UUID.randomUUID(), EventTypes.ORDER_CREATED, recipient, created(IDS.incrementAndGet(), marker));
+
+        // then - the marker's confirmation proves the listener recovered
+        awaitAtMost().until(() -> MailServer.receivedBy(marker).size() == 1);
+
+        assertThat(MailServer.receivedBy(recipient)).isEmpty();
+        assertThat(notificationsOf(eventId)).isZero();
+        assertThat(isInInbox(eventId)).isTrue();
     }
 
     @Test

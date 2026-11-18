@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A redelivered event whose send failed once does not retry the e-mail — the inbox already recorded it,
+  confirming the at-most-once guarantee with an integration test (#45, @Nip27)
 - Batch listener in `notification-service`: consumes order events in batches of up to 50 records, routing
   malformed or unsupported records individually to `orders.events.DLT` (#24, @Nip27)
 - Sender address validation at startup: `notification.mail.from` must be non-blank and a valid e-mail address;
