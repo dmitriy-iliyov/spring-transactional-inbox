@@ -2,6 +2,7 @@ package io.github.inbox.notification.mail;
 
 import io.github.inbox.contract.OrderCreatedEvent;
 import io.github.inbox.contract.OrderLine;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.mail.MailException;
@@ -55,12 +56,15 @@ public class OrderConfirmationMailer {
         message.setTo(order.customerEmail());
         message.setSubject(subject(order));
         message.setText(body(order));
+        Timer.Sample timing = metrics.startSend();
         try {
             mailSender.send(message);
         } catch (MailException e) {
+            metrics.sendFailed(timing);
             metrics.failed();
             throw e;
         }
+        metrics.sendSucceeded(timing);
         metrics.sent();
         notifications.save(new NotificationEntity(eventId, order.orderId(), order.customerEmail(), message.getSubject(),
                 clock.instant()));
