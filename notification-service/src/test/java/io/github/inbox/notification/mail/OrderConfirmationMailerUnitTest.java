@@ -102,6 +102,52 @@ class OrderConfirmationMailerUnitTest {
         assertThat(count(NotificationMetrics.NOTIFICATIONS_SENT)).isZero();
     }
 
+    @Test
+    @DisplayName("UT sendConfirmation() when the mail is sent should time the send as sent")
+    void sendConfirmation_whenMailIsSent_shouldTimeTheSendAsSent() {
+        // when
+        tested.sendConfirmation(EVENT_ID, order());
+
+        // then
+        assertThat(timings("sent")).isEqualTo(1);
+        assertThat(timings("failed")).isZero();
+    }
+
+    @Test
+    @DisplayName("UT sendConfirmation() when the mail server refuses should time the send as failed")
+    void sendConfirmation_whenMailServerRefuses_shouldTimeTheSendAsFailed() {
+        // given
+        doThrow(new MailSendException("connection refused")).when(mailSender).send(any(SimpleMailMessage.class));
+
+        // when
+        assertThatThrownBy(() -> tested.sendConfirmation(EVENT_ID, order())).isInstanceOf(MailSendException.class);
+
+        // then
+        assertThat(timings("failed")).isEqualTo(1);
+        assertThat(timings("sent")).isZero();
+    }
+
+    @Test
+    @DisplayName("UT sendConfirmation() when the event was already mailed should time nothing")
+    void sendConfirmation_whenEventWasAlreadyMailed_shouldTimeNothing() {
+        // given
+        when(notifications.existsByEventId(EVENT_ID)).thenReturn(true);
+
+        // when
+        tested.sendConfirmation(EVENT_ID, order());
+
+        // then
+        assertThat(timings("sent")).isZero();
+        assertThat(timings("failed")).isZero();
+    }
+
+    private long timings(String outcome) {
+        return meters.get(NotificationMetrics.NOTIFICATIONS_SEND_DURATION)
+                .tag(NotificationMetrics.OUTCOME, outcome)
+                .timer()
+                .count();
+    }
+
     private double count(String meter) {
         return meters.get(meter).counter().count();
     }

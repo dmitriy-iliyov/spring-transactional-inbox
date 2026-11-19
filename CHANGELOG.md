@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Send timing in `notification-service`: `notifications.send.duration` times each SMTP send, tagged
+  `outcome=sent` or `outcome=failed`, with a percentile histogram so Prometheus can compute p95
+  (#43, @trangb2306688-create)
 - A redelivered event whose send failed once does not retry the e-mail — the inbox already recorded it,
   confirming the at-most-once guarantee with an integration test (#45, @Nip27)
 - Batch listener in `notification-service`: consumes order events in batches of up to 50 records, routing
